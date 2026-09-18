@@ -17,7 +17,9 @@ usage() {
 while (( $# )); do
     case "$1" in
         --clean) clean_args=(--clean); shift;;
-        --lang) lang="$2"; shift 2;;
+        --lang)
+            [ $# -ge 2 ] || { echo "Missing value for --lang" >&2; exit 1; }
+            lang="$2"; shift 2;;
         --no-ocr-web) setup_ocr_web=false; shift;;
         --help|-h) usage; exit 0;;
         *) echo "Unknown argument: $1" >&2; usage >&2; exit 1;;
@@ -36,12 +38,16 @@ section() {
 }
 
 ocr_web_failed=false
+python_failed=false
 passed=()
 failed=()
 
 if [ "${lang}" != cpp ]; then
     section "Setting up Python Environment"
-    bash "${REPO_ROOT}/setup_env.sh"
+    if ! bash "${REPO_ROOT}/setup_env.sh"; then
+        python_failed=true
+        echo "FAILED: shared Python environment" >&2
+    fi
     echo
 
     if [ "${setup_ocr_web}" = true ]; then
@@ -63,7 +69,9 @@ fi
 if [ "${lang}" != python ]; then
     section "Building C++ Projects"
     mapfile -t build_scripts < <(
-        find "${REPO_ROOT}/apps" -mindepth 3 -maxdepth 4 -name build.sh | grep "/cpp/" | sort
+        for cpp_dir in "${REPO_ROOT}"/apps/*/cpp; do
+            [ ! -d "${cpp_dir}" ] || find "${cpp_dir}" -type f -name build.sh
+        done | sort
     )
     echo "Found ${#build_scripts[@]} build target(s)."
     echo
@@ -89,6 +97,12 @@ if [ "${ocr_web_failed}" = true ]; then
     echo "       Retry with apps/paddle-ocr-web/python/build.sh" >&2
 fi
 
-if [ ${#failed[@]} -gt 0 ] || [ "${ocr_web_failed}" = true ]; then
+if [ "${python_failed}" = true ]; then
+    echo "  FAIL shared Python environment - retry with ./setup_env.sh" >&2
+fi
+
+if [ ${#failed[@]} -gt 0 ] || [ "${ocr_web_failed}" = true ] || [ "${python_failed}" = true ]; then
     exit 1
 fi
+
+echo "Build complete. Next: ./setup_assets.sh"

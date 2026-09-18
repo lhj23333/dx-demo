@@ -20,5 +20,9 @@ fi
 mkdir -p "$BUILD_DIR"
 cd "$BUILD_DIR"
 
-cmake .. -DCMAKE_BUILD_TYPE=Release
+cmake_args=(-DCMAKE_BUILD_TYPE=Release)
+if [ -n "${ONNXRUNTIME_ROOT:-}" ]; then
+    cmake_args+=("-DONNXRUNTIME_ROOT=${ONNXRUNTIME_ROOT}")
+fi
+cmake .. "${cmake_args[@]}"
 make -j"$(nproc)"

@@ -2,7 +2,7 @@
 set -e
 
 # Sets up the PP-OCRv5 web demo: Gradio UI (:7860) + PaddleOCR-deepx OCR server
-# (:8080). Safe to re-run; every step is skipped when it is already in place.
+# (:8080). Reuses checkouts and venvs; rechecks package requirements on reruns.
 
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 REPO_ROOT=$(cd "${SCRIPT_DIR}/../../.." && pwd)
@@ -29,13 +29,15 @@ usage() {
     echo "Usage: $0 [--dx_rt PATH] [--cpu-only] [--clean]"
     echo "  --dx_rt PATH   dx_rt checkout used to build the dx_engine python binding"
     echo "                 (auto-detected when omitted; DX_RT_PATH env also works)"
-    echo "  --cpu-only     Skip the NPU setup (no dx_engine, no .dxnn models)"
+    echo "  --cpu-only     Skip the NPU binding and configuration"
     echo "  --clean        Remove the venvs first"
 }
 
 while (( $# )); do
     case "$1" in
-        --dx_rt) DX_RT_PATH="$2"; shift 2;;
+        --dx_rt)
+            [ $# -ge 2 ] || { echo "Missing value for --dx_rt" >&2; exit 1; }
+            DX_RT_PATH="$2"; shift 2;;
         --cpu-only) cpu_only=true; shift;;
         --clean) clean_build=true; shift;;
         --help|-h) usage; exit 0;;
@@ -72,7 +74,7 @@ fix_lfs_examples() {
 
     if ! command -v git-lfs > /dev/null 2>&1; then
         echo "Warning: the example images are git-lfs pointers and git-lfs is missing." >&2
-        dx_apt_hint git-lfs >&2
+        echo "         See the OCR Web prerequisites in the root README.md." >&2
         return 1
     fi
     echo "Fetching the git-lfs example images ..."
@@ -90,16 +92,19 @@ fix_lfs_examples || true
 # The upstream pin (pillow==9.5.0) has no wheel for python 3.12+, and its sdist
 # quietly builds a Pillow without the WebP encoder unless libwebp-dev is around.
 # Refuse that source build and drop the pin instead.
-install_web_requirements() {
+install_web_requirements() (
+    set -e
     local req="${WEB_DIR}/requirements.txt" filtered
-    "${VENV_DIR}"/bin/pip install --only-binary=Pillow -r "${req}" && return
-
-    echo "No Pillow wheel for $("${VENV_DIR}"/bin/python -V); using a newer one."
-    filtered="$(mktemp)"
-    grep -viE '^[[:space:]]*pillow([[:space:]]*[<>=!~]|$)' "${req}" > "${filtered}"
-    "${VENV_DIR}"/bin/pip install -r "${filtered}"
-    rm -f "${filtered}"
-}
+    if "${VENV_DIR}/bin/python" -c 'import sys; raise SystemExit(sys.version_info[:2] >= (3, 12))'; then
+        "${VENV_DIR}/bin/python" -m pip install --only-binary=Pillow -r "${req}"
+    else
+        filtered="$(mktemp "${WEB_DIR}/.requirements.XXXXXX")"
+        trap 'rm -f "${filtered}"' EXIT
+        grep -viE '^[[:space:]]*pillow([[:space:]]*[<>=!~]|$)' "${req}" > "${filtered}"
+        echo 'pillow>=10.4,<12.0' >> "${filtered}"
+        "${VENV_DIR}/bin/python" -m pip install --only-binary=Pillow -r "${filtered}"
+    fi
+)
 
 # gradio's Gallery writes WebP, so a Pillow without that encoder makes every
 # render die with KeyError: 'WEBP' after a successful inference. Checked on
@@ -129,32 +134,33 @@ else
     echo "Creating the web UI venv ..."
     "${DX_PYTHON}" -m venv "${VENV_DIR}"
     "${VENV_DIR}"/bin/pip install --upgrade pip
-    install_web_requirements
 fi
+install_web_requirements
 ensure_pillow_webp
 
 # --- OCR server venv ---------------------------------------------------------
 
 dx_drop_stale_venv "${FASTAPI_DIR}/venv"
-if [ -x "${FASTAPI_DIR}/venv/bin/python" ]; then
-    echo "Already present: OCR server venv ($(dx_py_version "${FASTAPI_DIR}/venv/bin/python"))"
-else
-    echo "Setting up the OCR server (paddlepaddle, paddleocr) ..."
-    # local_setup.sh otherwise takes whatever `python3` resolves to, and it
-    # prompts on a leftover venv or a missing apt package - declining is
-    # recoverable, hanging a build is not. Its model pre-download is flaky and
-    # optional (the server fetches what it needs on first start), so verify the
-    # result instead of trusting the exit status.
-    (cd "${FASTAPI_DIR}" && ./local_setup.sh --python "${DX_PYTHON}" < /dev/null) ||
-        echo "Warning: local_setup.sh reported an error; verifying the venv anyway."
-
-    if ! "${FASTAPI_DIR}"/venv/bin/python -c 'import paddleocr' > /dev/null 2>&1; then
-        echo "Error: the OCR server venv is unusable (paddleocr does not import)." >&2
-        echo "       Re-run ${FASTAPI_DIR}/local_setup.sh to see why." >&2
-        exit 1
-    fi
-    echo "OCR server venv verified (paddleocr importable)."
+if [ ! -x "${FASTAPI_DIR}/venv/bin/python" ]; then
+    echo "Creating the OCR server venv ..."
+    "${DX_PYTHON}" -m venv "${FASTAPI_DIR}/venv"
 fi
+# Install directly into the venv: upstream local_setup.sh mixes package
+# installation, interactive system-package checks, and model downloads.
+# PaddleOCR 3.3.x -> PaddleX[ocr-core] already requires opencv-contrib-python;
+# remove upstream's extra headless wheel so cv2 has a single provider.
+install_server_requirements() (
+    set -e
+    local filtered
+    filtered="$(mktemp "${FASTAPI_DIR}/.requirements.XXXXXX")"
+    trap 'rm -f "${filtered}"' EXIT
+    grep -viE '^[[:space:]]*opencv-python-headless([[:space:]]*[<>=!~]|$)' \
+        "${FASTAPI_DIR}/requirements.txt" > "${filtered}"
+    "${FASTAPI_DIR}/venv/bin/python" -m pip install --upgrade pip
+    "${FASTAPI_DIR}/venv/bin/python" -m pip install -r "${filtered}"
+)
+install_server_requirements
+"${FASTAPI_DIR}/venv/bin/python" -c 'import paddleocr, fastapi, uvicorn, pdf2image'
 
 # --- NPU support -------------------------------------------------------------
 # Only the dx_engine python binding is set up here; DX-RT itself is expected to
@@ -188,22 +194,14 @@ write_deepx_env() {
 }
 
 setup_npu() {
-    if [ ! -f /usr/local/lib/libdxrt.so ] && [ ! -f /usr/lib/libdxrt.so ]; then
-        echo "Skipping NPU setup: DX-RT is not installed (no libdxrt.so)."
-        return
-    fi
     # --dx_rt feeds the shared lookup, which otherwise tries DX_RT from
     # config.sh and the usual SDK layouts.
     if ! DX_RT="${DX_RT_PATH:-${DX_RT:-}}" dx_install_dx_engine "${FASTAPI_DIR}/venv"; then
         echo "Skipping NPU setup: dx_engine is unavailable."
+        rm -f "${FASTAPI_DIR}/deepx_env.sh"
         return
     fi
 
-    echo "Fetching the .dxnn NPU models ..."
-    (cd "${FASTAPI_DIR}" && ./setup_deepx_models.sh --deepx-path "${FASTAPI_DIR}/deepx") || {
-        echo "Error: failed to fetch the NPU models." >&2
-        return 1
-    }
     write_deepx_env
 
     # Fonts for the OCR overlays the server renders
@@ -235,7 +233,7 @@ if command -v pdftoppm > /dev/null 2>&1; then
     echo "  PDF input   : available (pdftoppm)"
 else
     echo "  PDF input   : UNAVAILABLE - PDF uploads will fail without pdftoppm"
-    dx_apt_hint poppler-utils
+    echo "                See the OCR Web prerequisites in the root README.md."
 fi
 echo
-echo "Run the demo with ../../../scripts/run_ocr_web.sh (or the launcher card)."
+echo "Next: run ${REPO_ROOT}/setup_assets.sh, then ${REPO_ROOT}/scripts/run_ocr_web.sh"

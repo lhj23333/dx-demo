@@ -121,21 +121,15 @@ download() {
 
     URL="${BASE_URL}${SOURCE_PATH}"
 
-    # check curl and install curl
-    if ! command -v curl &> /dev/null; then
-        print_colored "curl is not installed. Installing..."
-        sudo apt update && sudo apt install -y curl
-        # curl install failed
-        if ! command -v curl &> /dev/null; then
-            exit_with_message "Failed to install curl."
-        fi
+    if ! command -v curl > /dev/null 2>&1; then
+        exit_with_message "curl is unavailable. See the root README.md prerequisites."
     fi
 
     mkdir -p "$DOWNLOAD_DIR" || exit_with_message "Failed to create directory '$DOWNLOAD_DIR'. Check permissions."
 
     # download file
     print_colored "Downloading $FILENAME from $URL..."
-    curl -o "$DOWNLOAD_PATH" "$URL"
+    curl -fL -o "$DOWNLOAD_PATH" "$URL"
 
     # download failed check
     if [ $? -ne 0 ]; then

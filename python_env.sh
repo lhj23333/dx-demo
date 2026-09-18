@@ -1,64 +1,18 @@
 #!/bin/bash
 # Shared setup helpers, sourced by setup_env.sh and apps/paddle-ocr-web/python/
-# build.sh so every venv is built from one interpreter and the system packages
-# are listed in one place. Defining functions only; sourcing has no effect.
+# build.sh so every venv uses the selected interpreter. System prerequisites
+# are documented in README.md. Defining functions only; sourcing has no effect.
 
 # The OCR Web demo pins gradio==5.30.0, which declares Requires-Python >=3.10.
 DX_PYTHON_MIN_MINOR=10
+# NumPy 1.26 (numpy<2) supports Python through 3.12.
+DX_PYTHON_MAX_MINOR=12
 
 dx_is_arm() {
     case "$(uname -m)" in
         aarch64 | arm64) return 0 ;;
         *) return 1 ;;
     esac
-}
-
-# --- System packages ---------------------------------------------------------
-
-# "<package>|<what needs it>". Packages the vendored upstream setup checks for
-# itself (libglib2.0-0, libgomp1) are left out.
-dx_apt_packages() {
-    cat <<'EOF'
-python3-venv|creating the virtualenvs
-python3-pip|installing the python packages
-build-essential|building the C++ demos
-cmake|building the C++ demos
-libgl1|OpenGL behind the Qt GUIs
-libxcb-cursor0|Qt's xcb platform plugin
-git-lfs|the OCR Web example images
-poppler-utils|PDF input in the OCR Web demo (pdf2image runs pdftoppm)
-EOF
-    if dx_is_arm; then
-        cat <<'EOF'
-python3-pyqt5|PyQt5 itself (PyPI has no aarch64 wheel)
-python3-pyqt5.qtsvg|the launcher's SVG icons
-EOF
-    fi
-}
-
-dx_apt_hint() {
-    dx_apt_packages |
-        awk -F'|' -v want=" $* " 'index(want, " " $1 " ") { printf "  %s - %s\n", $1, $2 }'
-    echo "  sudo apt-get update && sudo apt-get install -y $*"
-}
-
-# Informative only: a board may provide a dependency from outside apt, and apt
-# needs root anyway.
-dx_report_missing_apt() {
-    command -v dpkg-query > /dev/null 2>&1 || return 0
-
-    local pkg missing=()
-    while IFS='|' read -r pkg _; do
-        dpkg-query -W -f='${Status}' "${pkg}" 2>/dev/null | grep -q 'ok installed' ||
-            missing+=("${pkg}")
-    done < <(dx_apt_packages)
-
-    if [ ${#missing[@]} -eq 0 ]; then
-        echo "All required APT packages are installed."
-    else
-        echo "Missing APT packages:"
-        dx_apt_hint "${missing[@]}"
-    fi
 }
 
 # --- Interpreter -------------------------------------------------------------
@@ -68,12 +22,13 @@ dx_py_version() {
 }
 
 dx_py_is_supported() {
-    "$1" -c "import sys; raise SystemExit(0 if sys.version_info[:2] >= (3, ${DX_PYTHON_MIN_MINOR}) else 1)" \
+    "$1" -c "import sys; raise SystemExit(0 if (3, ${DX_PYTHON_MIN_MINOR}) <= sys.version_info[:2] <= (3, ${DX_PYTHON_MAX_MINOR}) else 1)" \
         > /dev/null 2>&1
 }
 
 # Echoes the best interpreter candidate, which the caller still has to accept.
-# Debian 11 has no python3.10+ package, so a hand-built one is the normal case.
+# Prefer the distribution interpreter when supported, including on ARM where
+# the distribution PyQt5 modules are reused.
 dx_find_python() {
     local minor prefix
 
@@ -81,7 +36,11 @@ dx_find_python() {
         command -v "${DX_PYTHON}" 2>/dev/null || echo "${DX_PYTHON}"
         return 0
     fi
-    for minor in 13 12 11 10; do
+    if command -v python3 > /dev/null 2>&1 && dx_py_is_supported "$(command -v python3)"; then
+        command -v python3
+        return 0
+    fi
+    for minor in 12 11 10; do
         for prefix in "" /usr/local/bin/ "/opt/python-3.${minor}/bin/"; do
             command -v "${prefix}python3.${minor}" 2>/dev/null && return 0
         done
@@ -100,10 +59,9 @@ dx_require_python() {
         return 0
     fi
 
-    echo "Error: Python 3.${DX_PYTHON_MIN_MINOR}+ is required (gradio 5.30.0 in the OCR Web demo)." >&2
+    echo "Error: Python 3.${DX_PYTHON_MIN_MINOR}-3.${DX_PYTHON_MAX_MINOR} is required (Gradio and NumPy constraints)." >&2
     [ -n "${py}" ] && echo "  Found ${py} ($(dx_py_version "${py}" || echo "unusable"))." >&2
-    echo "  Debian 11 ships no python3.11; build one with 'make altinstall' and point" >&2
-    echo "  config.sh at it: export DX_PYTHON=/opt/python-3.11/bin/python3.11" >&2
+    echo "  Set DX_PYTHON to a compatible interpreter; see README.md." >&2
     return 1
 }
 
@@ -179,7 +137,8 @@ dx_install_dx_engine() {
 
     if [ -n "${wheel}" ]; then
         echo "Installing dx_engine from $(basename "${wheel}") ..."
-        "${venv_pip}" install "${wheel}"
+        "${venv_pip}" install "${wheel}" || return 1
+        "${venv_py}" -c 'import dx_engine.capi._pydxrt'
         return
     fi
 
@@ -205,7 +164,8 @@ dx_install_dx_engine() {
     local status=0
     "${venv_pip}" install "${src}/dx_engine_src" || status=1
     rm -rf "${src}"
-    return "${status}"
+    [ "${status}" -eq 0 ] || return "${status}"
+    "${venv_py}" -c 'import dx_engine.capi._pydxrt'
 }
 
 # --- PyQt5 -------------------------------------------------------------------
@@ -229,17 +189,17 @@ dx_install_system_pyqt5() {
     sys_dir="$(/usr/bin/python3 -c 'import os, PyQt5; print(os.path.dirname(PyQt5.__file__))' 2>/dev/null || true)"
     if [ -z "${sys_dir}" ]; then
         echo "Error: the system PyQt5 package is missing." >&2
-        dx_apt_hint python3-pyqt5 python3-pyqt5.qtsvg >&2
+        echo "       See the ARM prerequisites in README.md." >&2
         return 1
     fi
     if ! compgen -G "${sys_dir}/*.abi3.so" > /dev/null; then
         echo "Error: ${sys_dir} holds no abi3 modules, so Python $(dx_py_version "${venv_py}")" >&2
-        echo "       cannot load them. Install python3-pyqt5 from the distribution." >&2
+        echo "       cannot load them. See the ARM prerequisites in README.md." >&2
         return 1
     fi
 
     echo "Linking the system PyQt5 from ${sys_dir} ..."
-    "${venv_dir}/bin/pip" install PyQt5-sip
+    "${venv_dir}/bin/pip" install 'PyQt5-sip<13'
     site="$("${venv_py}" -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')"
     mkdir -p "${site}/PyQt5"
     cp -f "${sys_dir}/__init__.py" "${site}/PyQt5/"

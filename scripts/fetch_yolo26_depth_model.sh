@@ -5,8 +5,7 @@ set -e
 #
 # The model ships from the DEEPX model zoo rather than the demo_assets tarball
 # that setup_assets.sh unpacks, so it is pulled separately. Both backends need
-# it: the C++ build.sh calls this at build time, and run_yolo26_3*.sh calls it
-# before launch so the Python backend (which never runs build.sh) gets it too.
+# it: setup_assets.sh prepares it, and run_yolo26_3*.sh retries before launch.
 #
 # Safe to re-run; the download is skipped when any yolo26-depth-*.dxnn is
 # already in place.

@@ -115,6 +115,15 @@ fi
 if curl -sf -m 2 "${OCR_HEALTH_URL}" > /dev/null 2>&1; then
     echo "OCR server already running at ${OCR_API_URL}"
 elif [ -x "${FASTAPI_DIR}/run.sh" ] && [ -x "${FASTAPI_DIR}/venv/bin/python" ]; then
+    if [ -f "${FASTAPI_DIR}/deepx_env.sh" ]; then
+        for variant in server mobile; do
+            if [ -z "$(find -L "${FASTAPI_DIR}/deepx/engine/model_files/${variant}" -type f -name '*.dxnn' -print -quit 2>/dev/null)" ]; then
+                echo "Error: OCR Web ${variant} NPU models are missing."
+                echo "       Run ${ROOT_DIR}/setup_assets.sh before starting the demo."
+                exit 1
+            fi
+        done
+    fi
     echo "Starting OCR server ..."
     # Keep the wrapper as a tracked child of this script. Do not put '&' inside
     # the subshell: that detached the server and let the subshell exit at once.

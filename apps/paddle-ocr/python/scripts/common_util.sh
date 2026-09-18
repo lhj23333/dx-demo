@@ -265,30 +265,9 @@ delete_dir() {
         if [ -e "$expanded_path" ]; then
             print_colored_v2 "INFO" "Deleting path: $expanded_path"
             
-            # First attempt: try to delete without sudo
-            rm -rf "$expanded_path" 2>&1
-            local exit_code=$?
-            
-            if [ $exit_code -ne 0 ]; then
-                # Check if it's a permission denied error
-                if [[ "$(rm -rf "$expanded_path" 2>&1)" == *"Permission denied"* ]] || [ $exit_code -eq 1 ]; then
-                    print_colored_v2 "WARNING" "Permission denied when deleting: $expanded_path"
-                    print_colored_v2 "INFO" "Retrying with sudo..."
-                    
-                    # Second attempt: try to delete with sudo
-                    sudo rm -rf "$expanded_path" 2>&1
-                    local sudo_exit_code=$?
-                    
-                    if [ $sudo_exit_code -eq 0 ]; then
-                        print_colored_v2 "SUCCESS" "Successfully deleted with sudo: $expanded_path"
-                    else
-                        print_colored_v2 "ERROR" "Failed to delete even with sudo: $expanded_path"
-                        exit 1
-                    fi
-                else
-                    print_colored_v2 "ERROR" "Failed to delete: $expanded_path (exit code: $exit_code)"
-                    exit 1
-                fi
+            if ! rm -rf "$expanded_path" 2>&1; then
+                print_colored_v2 "ERROR" "Cannot delete $expanded_path; check ownership and permissions."
+                exit 1
             fi
         else
             print_colored_v2 "DEBUG" "Skip to delete path, because it does not exist: $expanded_path"
@@ -316,60 +295,18 @@ delete_symlinks() {
             if [ -e "$real_file" ]; then
                 print_colored_v2 "INFO" "Deleting original file: $real_file"
                 
-                # First attempt: try to delete without sudo
-                rm -rf "$real_file" 2>&1
-                local exit_code=$?
-                
-                if [ $exit_code -ne 0 ]; then
-                    # Check if it's a permission denied error
-                    if [[ "$(rm -rf "$real_file" 2>&1)" == *"Permission denied"* ]] || [ $exit_code -eq 1 ]; then
-                        print_colored_v2 "WARNING" "Permission denied when deleting original file: $real_file"
-                        print_colored_v2 "INFO" "Retrying with sudo..."
-                        
-                        # Second attempt: try to delete with sudo
-                        sudo rm -rf "$real_file" 2>&1
-                        local sudo_exit_code=$?
-                        
-                        if [ $sudo_exit_code -eq 0 ]; then
-                            print_colored_v2 "SUCCESS" "Successfully deleted original file with sudo: $real_file"
-                        else
-                            print_colored_v2 "ERROR" "Failed to delete original file even with sudo: $real_file"
-                            exit 1
-                        fi
-                    else
-                        print_colored_v2 "ERROR" "Failed to delete original file: $real_file (exit code: $exit_code)"
-                        exit 1
-                    fi
+                if ! rm -rf "$real_file" 2>&1; then
+                    print_colored_v2 "ERROR" "Cannot delete $real_file; check ownership and permissions."
+                    exit 1
                 fi
             fi
 
             # Delete the symbolic link
             print_colored_v2 "INFO" "Deleting symlink: $symlink"
             
-            # First attempt: try to delete without sudo
-            rm -rf "$symlink" 2>&1
-            local exit_code=$?
-            
-            if [ $exit_code -ne 0 ]; then
-                # Check if it's a permission denied error
-                if [[ "$(rm -rf "$symlink" 2>&1)" == *"Permission denied"* ]] || [ $exit_code -eq 1 ]; then
-                    print_colored_v2 "WARNING" "Permission denied when deleting symlink: $symlink"
-                    print_colored_v2 "INFO" "Retrying with sudo..."
-                    
-                    # Second attempt: try to delete with sudo
-                    sudo rm -rf "$symlink" 2>&1
-                    local sudo_exit_code=$?
-                    
-                    if [ $sudo_exit_code -eq 0 ]; then
-                        print_colored_v2 "SUCCESS" "Successfully deleted symlink with sudo: $symlink"
-                    else
-                        print_colored_v2 "ERROR" "Failed to delete symlink even with sudo: $symlink"
-                        exit 1
-                    fi
-                else
-                    print_colored_v2 "ERROR" "Failed to delete symlink: $symlink (exit code: $exit_code)"
-                    exit 1
-                fi
+            if ! rm -rf "$symlink" 2>&1; then
+                print_colored_v2 "ERROR" "Cannot delete $symlink; check ownership and permissions."
+                exit 1
             fi
         else
             print_colored_v2 "DEBUG" "Skip to delete symlink, because it is not a symlink: $symlink"

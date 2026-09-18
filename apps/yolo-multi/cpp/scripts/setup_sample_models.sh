@@ -37,9 +37,9 @@ main() {
 
     $GET_RES_CMD || {
         local error_msg="Get resource failed!"
-        local hint_msg="If the issue persists, please try again with sudo and the --force option, like this: 'sudo ./setup_sample_models.sh --force'."
+        local hint_msg="Check network access and destination ownership before retrying with --force."
         local origin_cmd="" # no need to run origin command
-        local suggested_action_cmd="sudo $GET_RES_CMD --force"
+        local suggested_action_cmd="$GET_RES_CMD --force"
 
         # handle_cmd_failure function arguments
         #   - local error_message=$1

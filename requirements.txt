@@ -1,16 +1,18 @@
-PyQt5
-PySide6
-# headless: the demos draw with Qt, and the GUI build bundles a second Qt
-opencv-contrib-python-headless<5
+# Launcher and most Python demos (system PyQt5 is linked on aarch64).
+PyQt5; platform_machine != "aarch64" and platform_machine != "arm64"
+# OCR, YOLO Multi and YOLO26 use only QtCore/QtGui/QtWidgets.
+PySide6-Essentials
+# Qt renders the GUIs; no demo uses OpenCV contrib modules or HighGUI.
+# OpenCV 4.12 requires NumPy 2 on our Python versions.
+opencv-python-headless>=4.10,<4.12
 pillow
 numpy>=1.26,<2.0
 tqdm
-torch<2.9
-torchvision<0.24
+# CPU wheels are installed first by setup_env.sh.
+-r requirements-torch.txt
 open_clip_torch
-onnx
 onnxruntime
+# OCR polygon postprocessing.
 shapely
 pyclipper
-jiwer
 psutil

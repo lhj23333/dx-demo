@@ -1,0 +1,3 @@
+# Optional helpers, not imported by demo-ocr.py.
+onnx           # engine/onnx_session.py: inspecting ONNX model files
+jiwer          # scripts/calculate_acc.py: OCR accuracy metrics

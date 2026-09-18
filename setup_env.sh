@@ -18,9 +18,6 @@ section() {
 section "Checking the Python interpreter"
 dx_require_python
 
-section "Checking the APT dependencies"
-dx_report_missing_apt
-
 section "Setting up the Python virtual environment"
 dx_setup_pip_cache "${REPO_ROOT}"
 dx_drop_stale_venv "${REPO_ROOT}/.venv"
@@ -40,15 +37,11 @@ fi
 
 section "Installing the Python requirements"
 .venv/bin/pip install --upgrade pip
-if dx_is_arm; then
-    # PyQt5 has no aarch64 wheel; pip would build the sdist and get OOM-killed.
-    filtered="$(mktemp)"
-    trap 'rm -f "${filtered}"' EXIT
-    grep -v -i "^pyqt5" requirements.txt > "${filtered}"
-    .venv/bin/pip install -r "${filtered}"
-else
-    .venv/bin/pip install -r requirements.txt
-fi
+# The demos use CPU tensor operations; NPU inference is provided by DXRT.
+# Resolve torch/torchvision together from the CPU index before open_clip_torch.
+.venv/bin/pip install --index-url https://download.pytorch.org/whl/cpu \
+    -r requirements-torch.txt
+.venv/bin/pip install -r requirements.txt
 
 if dx_is_arm; then
     section "Installing PyQt5 from the system package"
@@ -56,7 +49,6 @@ if dx_is_arm; then
 fi
 
 section "Installing the DXRT python bindings (dx_engine)"
-# Not fatal: the C++ demos and the OCR Web UI run without the bindings.
-dx_install_dx_engine "${REPO_ROOT}/.venv" || true
+dx_install_dx_engine "${REPO_ROOT}/.venv"
 
 echo "Environment setup complete."

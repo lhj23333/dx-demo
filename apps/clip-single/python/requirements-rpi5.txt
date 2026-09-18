@@ -1,8 +1,7 @@
-torch
+-r ../../../requirements-torch.txt
 open_clip_torch
-onnx
 onnxruntime
-opencv-python-headless
-numpy
-tqdm
-scipy
+opencv-python-headless>=4.10,<4.12
+numpy>=1.26,<2.0
+pillow
+# PyQt5 is provided by the system on aarch64; use the root setup_env.sh.

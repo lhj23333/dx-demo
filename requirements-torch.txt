@@ -1,0 +1,3 @@
+# Keep the existing version bounds; pip resolves a compatible pair.
+torch<2.9
+torchvision<0.24

@@ -13,8 +13,8 @@ export DX_OCR_API_URL="http://localhost:8080/api/v1/ocr"
 # Set the browser used by the web demos (empty = desktop default browser)
 export DX_BROWSER="${DX_BROWSER:-}"
 
-# Python used to create virtualenvs (must be 3.10+). Empty = auto-detect
-# python3.11, including /mnt/data/opt/python-3.11/bin/python3.11
+# Python used to create virtualenvs (3.10-3.12). Empty = auto-detect.
+# Use an explicit path for a separately installed interpreter.
 export DX_PYTHON="${DX_PYTHON:-}"
 
 # dx_rt checkout used to build the dx_engine python binding. Empty = auto-detect

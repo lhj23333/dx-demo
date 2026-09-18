@@ -5,57 +5,57 @@ REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
 WORKSPACE_DIR="$REPO_ROOT/workspace"
 ASSETS_URL="${DX_DEMOS_ASSETS_URL:-https://cs.deepx.ai/_deepx_fae_archive/demo_assets.tar.gz}"
 CACHE_DIR="$REPO_ROOT/.cache"
-TAR_FILE="$CACHE_DIR/demo_assets.tar.gz"
+FASTAPI_DIR="$REPO_ROOT/apps/paddle-ocr-web/python/PaddleOCR-deepx/deploy/fastapi"
+# shellcheck source=scripts/asset_helpers.sh
+source "$REPO_ROOT/scripts/asset_helpers.sh"
 
 usage() {
-    echo "Usage: $0 [--force] [--help]"
-    echo "Downloads and extracts demo models and videos into workspace/"
-    echo "  --force   Force re-download and extraction even if workspace exists"
+    echo "Usage: $0 [--force] [--no-ocr-web] [--help]"
+    echo "Prepare workspace models/videos, YOLO26 depth, and configured OCR Web NPU assets."
+    echo "  --force        Re-download and overwrite managed assets"
+    echo "  --no-ocr-web   Skip OCR Web assets even if its NPU environment exists"
 }
 
 FORCE=false
+setup_ocr_web=true
 while (( $# )); do
     case "$1" in
         --force) FORCE=true; shift;;
+        --no-ocr-web) setup_ocr_web=false; shift;;
         --help|-h) usage; exit 0;;
-        *) echo "Unknown option: $1"; usage; exit 1;;
+        *) echo "Unknown option: $1" >&2; usage >&2; exit 1;;
     esac
 done
 
 if [ "$FORCE" = false ] && [ -d "$WORKSPACE_DIR/models" ] && [ -d "$WORKSPACE_DIR/videos" ]; then
-    echo "Assets already exist in workspace/. Use --force to overwrite."
-    exit 0
-fi
-
-echo "========================================"
-echo "Downloading Demo Assets"
-echo "========================================"
-
-mkdir -p "$CACHE_DIR"
-mkdir -p "$WORKSPACE_DIR"
-
-if [ "$FORCE" = true ] || [ ! -f "$TAR_FILE" ]; then
-    echo "Downloading from $ASSETS_URL ..."
-    if command -v wget &> /dev/null; then
-        wget -O "$TAR_FILE" "$ASSETS_URL"
-    elif command -v curl &> /dev/null; then
-        curl -L -o "$TAR_FILE" "$ASSETS_URL"
-    else
-        echo "Error: Neither wget nor curl found. Please install one of them."
-        exit 1
-    fi
+    echo "Workspace assets already exist. Use --force to overwrite."
 else
-    echo "Using cached archive: $TAR_FILE"
+    dx_unpack_asset "$ASSETS_URL" "$CACHE_DIR/demo_assets.tar.gz" "$WORKSPACE_DIR" workspace "$FORCE"
 fi
 
-echo "Extracting assets to workspace/ ..."
-# The archive is packed with a top-level workspace/ directory. Strip it so the
-# contents land in workspace/ instead of workspace/workspace/.
-TOP_LEVEL_DIRS=$(tar -tzf "$TAR_FILE" | awk -F/ '{print $1}' | sort -u)
-if [ "$TOP_LEVEL_DIRS" = "workspace" ]; then
-    tar -xzf "$TAR_FILE" -C "$WORKSPACE_DIR" --strip-components=1
+force_args=()
+[ "$FORCE" = false ] || force_args=(--force)
+bash "$REPO_ROOT/scripts/fetch_yolo26_depth_model.sh" "${force_args[@]}"
+
+# Use the same archives as upstream deepx/setup.sh without invoking its
+# interactive helpers, which can install system packages or elevate.
+if [ "$setup_ocr_web" = true ] && [ -f "$FASTAPI_DIR/deepx_env.sh" ]; then
+    models_dir="$FASTAPI_DIR/deepx/engine/model_files"
+    for variant in server mobile; do
+        if [ "$FORCE" = false ] && [ -n "$(find -L "$models_dir/$variant" -type f -name '*.dxnn' -print -quit 2>/dev/null)" ]; then
+            echo "OCR Web $variant models already exist."
+        else
+            dx_unpack_asset \
+                "https://sdk.deepx.ai/res/assets/dx_baidu_PPOCR/$variant.tar.gz" \
+                "$CACHE_DIR/ocr-web-$variant.tar.gz" "$models_dir/$variant" "$variant" "$FORCE"
+        fi
+    done
+    # The engine resolves dictionaries one level above the server models.
+    for dictionary in "$models_dir/server/"*.txt; do
+        [ ! -f "$dictionary" ] || cp "$dictionary" "$models_dir/"
+    done
 else
-    tar -xzf "$TAR_FILE" -C "$WORKSPACE_DIR"
+    echo "Skipping OCR Web NPU assets (not configured or --no-ocr-web)."
 fi
 
-echo "Done! Assets are ready in $WORKSPACE_DIR"
+echo "Demo assets are ready. Run ./scripts/run_launcher.sh"

@@ -1,58 +1,46 @@
-# paddle-ocr-web / python
+# PaddleOCR Web environments / 环境说明
 
-PP-OCRv5 Web 데모의 실제 구현이 들어가는 폴더입니다.
+See the [root installation guide](../../../README.md) / [中文安装指南](../../../README.zh-CN.md) for prerequisites and the three-stage deployment flow.
 
-```
+```text
 python/
-├── build.sh                        환경 구성 (재실행 안전)
-├── PP-OCRv5_Online_demo-deepx/     Gradio Web UI  (:7860)   — build.sh 가 clone
-├── PaddleOCR-deepx/                FastAPI 서버   (:8080)   — build.sh 가 clone
-└── .venv/                          Web UI 전용 venv         — build.sh 가 생성
+├── build.sh
+├── PP-OCRv5_Online_demo-deepx/   # Cloned UI source / UI 源码
+├── PaddleOCR-deepx/             # Cloned server source / 服务端源码
+│   └── deploy/fastapi/
+│       ├── venv/               # Server environment / 服务端环境
+│       ├── deepx_env.sh         # NPU configuration / NPU 配置
+│       └── deepx/engine/model_files/
+└── .venv/                      # UI environment / UI 环境
 ```
 
-clone 결과물과 venv 는 git 에 포함되지 않습니다(`.gitignore`).
+## Build behavior / 构建行为
 
-## 환경 구성
+1. Clone the UI and server `deepx` branches if absent; retrieve LFS example images. / 按需获取两个上游仓库及 LFS 示例图片。
+2. Create/reuse the UI venv and install its requirements. Python 3.12 uses a newer binary Pillow instead of the upstream 9.5 pin; WebP support is checked. / 准备 UI 环境，处理 Python 3.12 下 Pillow wheel 兼容性，并检查 WebP。
+3. Create/reuse the server venv and install its requirements directly. PaddleX supplies `opencv-contrib-python`, so the duplicate upstream headless requirement is filtered out. / 直接安装服务端依赖，过滤重复的 OpenCV wheel。
+4. Unless `--cpu-only` is given, install the matching SDK's `dx_engine` binding, check its native import, and write `deepx_env.sh`. If the binding is unavailable, remove stale NPU configuration and report CPU mode. / 安装绑定并生成 NPU 配置；绑定不可用时清除旧配置并报告 CPU 模式。
+5. Run the root `setup_assets.sh` separately to fetch server/mobile NPU models and dictionaries. / 单独执行根资源脚本准备模型与字典。
+
+The shared helper uses a local compatible SDK wheel, or builds the binding from a temporary copy of `DX_RT/python_package` with the SDK headers beside it. It does not rebuild or install the system DXRT library. The upstream `local_setup.sh` and privileged `local_deepx_setup.sh` are not invoked.
+
+共享 helper 优先使用本地兼容 SDK wheel，否则从 `DX_RT/python_package` 临时副本构建绑定，并保留配套头文件布局。不重新编译安装系统 DXRT 库，也不调用上游 `local_setup.sh` 或需要提权的 `local_deepx_setup.sh`。
+
+From the repository root / 从仓库根目录执行：
 
 ```bash
-./build.sh                 # NPU 자동 감지 (dx_rt 경로 탐색)
-./build.sh --dx_rt PATH    # dx_rt 위치를 직접 지정
-./build.sh --cpu-only      # NPU 없이 CPU 만
-./build.sh --clean         # venv / dx_engine 빌드 산출물 제거 후 재구성
+./apps/paddle-ocr-web/python/build.sh
+./setup_assets.sh
+./scripts/run_ocr_web.sh
+./scripts/kill_ocr_web.sh
 ```
 
-`build.sh` 가 수행하는 일:
+| Option / 选项 | Effect / 作用 |
+| --- | --- |
+| `--dx_rt PATH` | Explicit binding source checkout; also accepts `DX_RT_PATH` / 指定绑定源码目录 |
+| `--cpu-only` | Skip NPU binding/configuration / 跳过 NPU 绑定与配置 |
+| `--clean` | Recreate both Web venvs, keep sources/resources / 重建两个环境，保留源码和资源 |
 
-1. Web UI · OCR 서버 리포지토리 clone (branch `deepx`)
-2. Web UI venv 생성 + `requirements.txt` 설치 (gradio 5.30.0 고정)
-3. OCR 서버 환경 구성 — 업스트림 `deploy/fastapi/local_setup.sh` 호출 (paddlepaddle, paddleocr)
-4. NPU: `dx_engine` 빌드·설치 → `.dxnn` 모델 다운로드 → `deepx_env.sh` 생성
-5. 구성 결과 요약 출력
+Requirements are checked again on reruns so an interrupted pip install can be repaired. Upstream branches are not commit-pinned. For old environments with multiple OpenCV providers, use `--clean`; pip does not remove packages merely because they disappeared from a requirements file.
 
-각 단계는 이미 되어 있으면 건너뛰므로 몇 번이든 다시 실행해도 됩니다.
-
-## 실행
-
-```bash
-../../../scripts/run_ocr_web.sh     # OCR 서버 + UI 기동 후 브라우저 열기
-../../../scripts/kill_ocr_web.sh    # 모두 종료
-```
-
-런처의 `Optical Character Recognition (Web)` 카드 `PP-OCRv5 Web` / `Stop` 버튼과 동일합니다.
-
-## NPU 에 sudo 가 필요하지 않은 이유
-
-업스트림 `local_deepx_setup.sh` 는 `dx_rt/build.sh` 로 DX-RT 를 빌드·설치하기 때문에
-(`sudo ninja install`, `systemctl`) sudo 를 요구합니다. 하지만 타깃 장비에는 DX-RT 가 이미
-설치되어 있으므로(`dxrt-cli -s` 동작, `/usr/local/lib/libdxrt.so` 존재) 재빌드가 필요 없고,
-**빠져 있는 것은 파이썬 바인딩뿐**입니다. `build.sh` 는 그 바인딩만 venv 에 설치합니다.
-
-```bash
-CMAKE_ARGS="-DDX_ROOT_DIR=<dx_rt>" venv/bin/pip install <dx_rt>/python_package
-```
-
-`DX_ROOT_DIR` 을 넘기지 않으면 기본값이 `python_package/` 를 가리켜 `lib/include` 를 찾지 못하고
-빌드가 실패합니다. DX-RT 자체가 설치되지 않은 장비에서는 `build.sh` 가 NPU 단계를 건너뛰고
-CPU 모드로 구성한 뒤 안내를 출력합니다.
-
-요구사항: cmake 3.15+, g++, python3.10+ (pybind11 은 pip 이 자동 설치)
+重新运行会再次核对安装依赖，以修复中断的 pip 安装。上游分支未锁定 commit。旧环境若已有多种 OpenCV wheel，请使用 `--clean`；从 requirements 删除声明不会自动卸载旧包。
