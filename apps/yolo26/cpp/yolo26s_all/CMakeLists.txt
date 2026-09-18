@@ -48,4 +48,5 @@ target_link_libraries(yolo26s_all
     Qt5::Widgets
     ${OpenCV_LIBS}
     ${DXRT_LIB}
+    pthread
 )

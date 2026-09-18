@@ -1,19 +1,15 @@
 PyQt5
 PySide6
-opencv-contrib-python-headless
-numpy
-scipy
+# headless: the demos draw with Qt, and the GUI build bundles a second Qt
+opencv-contrib-python-headless<5
+pillow
+numpy>=1.26,<2.0
 tqdm
-requests
-torch
-torchvision
-torchaudio
+torch<2.9
+torchvision<0.24
 open_clip_torch
 onnx
-onnxsim
-onnxscript
 onnxruntime
-scikit-image
 shapely
 pyclipper
 jiwer

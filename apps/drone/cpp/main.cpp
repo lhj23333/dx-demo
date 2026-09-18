@@ -39,6 +39,12 @@ constexpr int kDefaultUpdateInterval = 200;
 constexpr float kTemplateUpdateThreshold = 0.5f;
 constexpr float kMaxScoreDecay = 1.0f;
 constexpr float kClipMargin = 10.0f;
+constexpr std::array<float, 3> kImageMean = {0.485f, 0.456f, 0.406f};
+constexpr std::array<float, 3> kImageStd = {0.229f, 0.224f, 0.225f};
+constexpr float kMinTrackingScore = 0.15f;
+constexpr float kMaxFrameScaleChange = 1.20f;
+constexpr float kMaxCenterShiftFactor = 0.75f;
+constexpr float kMinCenterShiftPixels = 12.0f;
 constexpr int kExitButtonWidth = 32;
 constexpr int kExitButtonHeight = 28;
 constexpr int kExitButtonMargin = 14;
@@ -222,7 +228,7 @@ public:
         online_max_template_tensor_ = template_tensor_;
     }
 
-    cv::Rect update(const cv::Mat& image)
+    cv::Rect2f update(const cv::Mat& image)
     {
         ++frame_id_;
 
@@ -239,17 +245,12 @@ public:
             value = value * static_cast<float>(kSearchSize) / search_crop.resize_factor;
         }
 
-        state_ = clip_box(map_box_back(pred_box, search_crop.resize_factor),
-                          image.rows,
-                          image.cols,
-                          kClipMargin);
-
+        const cv::Rect2f candidate = stabilize_prediction(
+            map_box_back(pred_box, search_crop.resize_factor),
+            pred_score);
+        state_ = clip_box(candidate, image.rows, image.cols, kClipMargin);
         update_online_template(image, pred_score);
-
-        return cv::Rect(static_cast<int>(state_.x),
-                        static_cast<int>(state_.y),
-                        static_cast<int>(state_.width),
-                        static_cast<int>(state_.height));
+        return state_;
     }
 
 private:
@@ -393,7 +394,9 @@ private:
             for (int x = 0; x < output_size; ++x) {
                 const int offset = y * output_size + x;
                 for (int c = 0; c < 3; ++c) {
-                    tensor[static_cast<std::size_t>(c * plane_size + offset)] = row[x][c];
+                    tensor[static_cast<std::size_t>(c * plane_size + offset)] =
+                        (row[x][c] - kImageMean[static_cast<std::size_t>(c)]) /
+                        kImageStd[static_cast<std::size_t>(c)];
                 }
             }
         }
@@ -413,6 +416,55 @@ private:
                           cy_real - 0.5f * pred_box[3],
                           pred_box[2],
                           pred_box[3]);
+    }
+
+    cv::Rect2f stabilize_prediction(const cv::Rect2f& candidate, float pred_score) const
+    {
+        const bool valid = std::isfinite(candidate.x) &&
+                           std::isfinite(candidate.y) &&
+                           std::isfinite(candidate.width) &&
+                           std::isfinite(candidate.height) &&
+                           candidate.width > 0.0f &&
+                           candidate.height > 0.0f;
+        if (!valid || (pred_score >= 0.0f && pred_score < kMinTrackingScore)) {
+            return state_;
+        }
+
+        if (frame_id_ <= 1) {
+            return candidate;
+        }
+
+        const float candidate_center_x = candidate.x + 0.5f * candidate.width;
+        const float candidate_center_y = candidate.y + 0.5f * candidate.height;
+        const float previous_center_x = state_.x + 0.5f * state_.width;
+        const float previous_center_y = state_.y + 0.5f * state_.height;
+
+        const float width = std::clamp(candidate.width,
+                                       state_.width / kMaxFrameScaleChange,
+                                       state_.width * kMaxFrameScaleChange);
+        const float height = std::clamp(candidate.height,
+                                        state_.height / kMaxFrameScaleChange,
+                                        state_.height * kMaxFrameScaleChange);
+
+        const float dx = candidate_center_x - previous_center_x;
+        const float dy = candidate_center_y - previous_center_y;
+        const float distance = std::hypot(dx, dy);
+        const float max_shift = std::max(
+            kMinCenterShiftPixels,
+            kMaxCenterShiftFactor * std::hypot(state_.width, state_.height));
+
+        float center_x = candidate_center_x;
+        float center_y = candidate_center_y;
+        if (distance > max_shift) {
+            const float ratio = max_shift / distance;
+            center_x = previous_center_x + dx * ratio;
+            center_y = previous_center_y + dy * ratio;
+        }
+
+        return cv::Rect2f(center_x - 0.5f * width,
+                          center_y - 0.5f * height,
+                          width,
+                          height);
     }
 
     cv::Rect2f clip_box(const cv::Rect2f& box, int image_h, int image_w, float margin) const
@@ -935,11 +987,7 @@ private:
                 return;
             }
 
-            const cv::Rect bbox = tracker_->update(frame);
-            latest_bbox_ = cv::Rect2f(static_cast<float>(bbox.x),
-                                      static_cast<float>(bbox.y),
-                                      static_cast<float>(bbox.width),
-                                      static_cast<float>(bbox.height));
+            latest_bbox_ = tracker_->update(frame);
             current_frame_ = frame;
             frame_image_ = mat_to_qimage(current_frame_);
             update_fps();

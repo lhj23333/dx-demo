@@ -21,6 +21,7 @@ DEEPX NPU 런타임(DXRT)을 활용한 데모 모음입니다. 객체 검출, �
 |------|------|
 | `build.sh` | 최상위 빌드 스크립트 (Python 환경 + OCR Web 환경 + 모든 C++ 데모) |
 | `setup_env.sh` | 공용 Python 가상환경 `.venv` 생성, `requirements.txt` 및 `dx_engine` 설치 |
+| `python_env.sh` | 인터프리터 탐색·버전 검사·APT 의존성 점검·PyQt5 연결 헬퍼 (다른 스크립트가 source) |
 | `setup_assets.sh` | `.dxnn` 모델·테스트 비디오 다운로드 (`workspace/` 생성) |
 | `clean_all.sh` | C++ 빌드 산출물 정리 (`build/`, `bin/`, `cmake-build-*`) |
 | `config.sh` | 카메라·브라우저 등 데모 공통 설정 |
@@ -45,6 +46,26 @@ DEEPX NPU 런타임(DXRT)을 활용한 데모 모음입니다. 객체 검출, �
 
 ## 사전 요구 사항
 
+> **⚠️ Python 3.10 이상이 필요합니다.** OCR Web 데모가 `gradio==5.30.0` 을 고정하는데, 이 패키지는
+> 메타데이터에 `Requires-Python >=3.10` 을 선언합니다. 더 낮은 인터프리터에서는 pip 가 gradio 5.x
+> 릴리스를 전부 버리고 `No matching distribution found for gradio` 로 끝나므로, `build.sh` 가
+> 시작할 때 버전을 확인하고 중단합니다.
+>
+> Debian 11 에는 python3.11 패키지가 없습니다. `make altinstall` 로 따로 빌드해 시스템 `python3`
+> 는 그대로 두고, `config.sh` 의 `DX_PYTHON` 으로 위치를 알려 주세요.
+>
+> ```bash
+> export DX_PYTHON=/mnt/data/opt/python-3.11/bin/python3.11
+> ```
+>
+> **ARM 에서 PyQt5 는 pip 로 설치하지 않습니다.** PyPI 에 aarch64 휠이 없어 sdist 를 빌드하게 되는데,
+> Qt5 바인딩 전체를 컴파일하다 메모리 부족으로 OOM 킬 됩니다. 대신 배포판 패키지를 venv 에 연결하므로
+> 아래 패키지를 반드시 설치해 두세요.
+>
+> ```bash
+> sudo apt install -y python3-pyqt5 python3-pyqt5.qtsvg
+> ```
+
 ### 1. 시스템 패키지 (Ubuntu)
 
 아래 명령으로 대부분의 C++ 데모에 필요한 패키지를 한 번에 설치할 수 있습니다.
@@ -66,7 +87,11 @@ sudo apt install -y \
     libv4l-dev \
     v4l-utils \
     libcurl4-openssl-dev \
-    wget
+    wget \
+    libgl1 \
+    libxcb-cursor0 \
+    git-lfs \
+    poppler-utils
 ```
 
 | 패키지 | 용도 |
@@ -80,6 +105,12 @@ sudo apt install -y \
 | `libgstreamer1.0-dev`, `libgstreamer-plugins-base1.0-dev` | GStreamer (`yolo-multi`) |
 | `libv4l-dev`, `v4l-utils` | USB 카메라 입력 |
 | `libcurl4-openssl-dev`, `wget` | 모델·리소스 다운로드 스크립트 |
+| `libgl1`, `libxcb-cursor0` | PyQt5/PySide6 GUI 가 쓰는 OpenGL·Qt xcb 플러그인 |
+| `git-lfs` | OCR Web 예제 이미지 (없으면 clone 이 포인터 파일만 받아 예제 갤러리가 깨집니다) |
+| `poppler-utils` | OCR Web 의 PDF 입력 (`pdf2image` 가 `pdftoppm` 을 호출합니다) |
+
+설치 여부는 `setup_env.sh` 가 시작할 때 점검해서 **빠진 패키지만** 설치 명령과 함께 출력합니다.
+패키지 목록의 원본은 `python_env.sh` 의 `dx_apt_packages` 한 곳입니다.
 
 OpenCV 빌드 의존성이 부족할 경우 아래 패키지를 추가로 설치하세요.
 
@@ -320,6 +351,15 @@ dxrt-cli -s                                        # 장치·펌웨어 응답 �
 
 ```bash
 ./apps/paddle-ocr-web/python/build.sh
+```
+
+**OCR Web 에서 이미지는 되는데 PDF 업로드만 실패하는 경우**
+
+OCR 서버는 PDF 를 `pdf2image` 로 페이지 이미지로 변환하는데, 이 패키지는 poppler 의 `pdftoppm`
+실행 파일을 호출합니다. pip 로는 설치되지 않는 시스템 의존성이라 apt 로 따로 넣어야 합니다.
+
+```bash
+sudo apt install -y poppler-utils
 ```
 
 **데모 에셋이 없는 경우**

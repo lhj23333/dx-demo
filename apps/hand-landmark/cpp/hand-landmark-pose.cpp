@@ -192,6 +192,7 @@ struct LandmarkJob {
     LandmarkCrop crop;
     LandmarkCollector* collector = nullptr;
     float confidence_threshold = kDefaultLandmarkConfidence;
+    bool mirrored = false;
 };
 
 struct PoseCollector {
@@ -1025,7 +1026,6 @@ HandLandmarkResult parse_landmark_outputs(const dxrt::TensorPtrs& outputs,
     HandLandmarkResult result;
     result.palm = job.palm;
     result.handedness_score = handedness_score;
-    result.handedness = handedness_score > 0.5f ? "Right" : "Left";
     result.confidence = presence_score;
 
     std::vector<cv::Point2f> crop_points;
@@ -1045,6 +1045,11 @@ HandLandmarkResult parse_landmark_outputs(const dxrt::TensorPtrs& outputs,
     for (int i = 0; i < kHandLandmarkCount; ++i) {
         result.landmarks[i].image = frame_points[static_cast<std::size_t>(i)];
     }
+    bool right = handedness_score > 0.5f;
+    if (job.mirrored) {
+        right = !right;
+    }
+    result.handedness = right ? "Right" : "Left";
     return result;
 }
 
@@ -1072,7 +1077,8 @@ void landmark_callback(dxrt::TensorPtrs& outputs, void* user_data) {
 std::vector<HandLandmarkResult> run_landmark_async(dxrt::InferenceEngine& landmark_engine,
                                                    const cv::Mat& frame,
                                                    const std::vector<PalmDetection>& palms,
-                                                   float confidence_threshold) {
+                                                   float confidence_threshold,
+                                                   bool mirrored) {
     LandmarkCollector collector;
     collector.expected = static_cast<int>(palms.size());
     if (palms.empty()) return {};
@@ -1082,6 +1088,7 @@ std::vector<HandLandmarkResult> run_landmark_async(dxrt::InferenceEngine& landma
         job->palm = palm;
         job->collector = &collector;
         job->confidence_threshold = confidence_threshold;
+        job->mirrored = mirrored;
         job->input = make_landmark_input(frame, palm.hand_roi, &job->crop);
         void* input_ptr = job->input->data();
         void* user_data = job.release();
@@ -2075,7 +2082,7 @@ void hand_loop(const Options& options,
                                        options.max_hands);
             std::vector<HandLandmarkResult> hands =
                 run_landmark_async(landmark_engine, packet.frame, palms,
-                                   options.landmark_confidence);
+                                   options.landmark_confidence, options.use_camera);
             results->set_hand(HandPacket{packet.id, std::move(palms), std::move(hands)});
         }
     } catch (const dxrt::Exception& e) {

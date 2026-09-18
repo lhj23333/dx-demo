@@ -25,6 +25,12 @@ DEFAULT_UPDATE_INTERVAL = 200
 TEMPLATE_UPDATE_THRESHOLD = 0.5
 MAX_SCORE_DECAY = 1.0
 CLIP_MARGIN = 10.0
+IMAGE_MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
+IMAGE_STD = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+MIN_TRACKING_SCORE = 0.15
+MAX_FRAME_SCALE_CHANGE = 1.20
+MAX_CENTER_SHIFT_FACTOR = 0.75
+MIN_CENTER_SHIFT_PIXELS = 12.0
 EXIT_BTN_WIDTH = 32
 EXIT_BTN_HEIGHT = 28
 EXIT_BTN_MARGIN = 14
@@ -96,11 +102,10 @@ class MixFormerV2Tracker:
         pred_score = self.find_pred_score(outputs)
         
         pred_box = pred_box * SEARCH_SIZE / resize_factor
-        self.state = self.clip_box(self.map_box_back(pred_box, resize_factor), image.shape[0], image.shape[1], CLIP_MARGIN)
-        
+        candidate = self.stabilize_prediction(self.map_box_back(pred_box, resize_factor), pred_score)
+        self.state = self.clip_box(candidate, image.shape[0], image.shape[1], CLIP_MARGIN)
         self.update_online_template(image, pred_score)
-        
-        return (int(self.state[0]), int(self.state[1]), int(self.state[2]), int(self.state[3]))
+        return self.state
 
     def sample_target(self, image, target_box, search_area_factor, output_size):
         x, y, w, h = target_box
@@ -139,6 +144,7 @@ class MixFormerV2Tracker:
         
         resized = cv2.resize(padded, (output_size, output_size))
         resized = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
+        resized = (resized - IMAGE_MEAN) / IMAGE_STD
         
         # Build CHW flat tensor exactly like C++ does:
         # tensor[c * plane_size + y * output_size + x] = row[x][c]
@@ -159,6 +165,41 @@ class MixFormerV2Tracker:
         cy_real = pred_box[1] + (cy_prev - half_side)
         
         return (cx_real - 0.5 * pred_box[2], cy_real - 0.5 * pred_box[3], pred_box[2], pred_box[3])
+
+    def stabilize_prediction(self, candidate, pred_score):
+        values = np.asarray(candidate, dtype=np.float32)
+        if values.size != 4 or not np.all(np.isfinite(values)) or values[2] <= 0.0 or values[3] <= 0.0:
+            return self.state
+
+        if pred_score is not None and 0.0 <= pred_score < MIN_TRACKING_SCORE:
+            return self.state
+
+        if self.frame_id <= 1:
+            return tuple(float(v) for v in values)
+
+        prev_x, prev_y, prev_w, prev_h = self.state
+        cand_x, cand_y, cand_w, cand_h = (float(v) for v in values)
+
+        cand_w = float(np.clip(cand_w, prev_w / MAX_FRAME_SCALE_CHANGE, prev_w * MAX_FRAME_SCALE_CHANGE))
+        cand_h = float(np.clip(cand_h, prev_h / MAX_FRAME_SCALE_CHANGE, prev_h * MAX_FRAME_SCALE_CHANGE))
+
+        prev_cx = prev_x + 0.5 * prev_w
+        prev_cy = prev_y + 0.5 * prev_h
+        cand_cx = cand_x + 0.5 * float(values[2])
+        cand_cy = cand_y + 0.5 * float(values[3])
+        dx = cand_cx - prev_cx
+        dy = cand_cy - prev_cy
+        distance = math.hypot(dx, dy)
+        max_shift = max(
+            MIN_CENTER_SHIFT_PIXELS,
+            MAX_CENTER_SHIFT_FACTOR * math.hypot(prev_w, prev_h),
+        )
+        if distance > max_shift:
+            ratio = max_shift / distance
+            cand_cx = prev_cx + dx * ratio
+            cand_cy = prev_cy + dy * ratio
+
+        return (cand_cx - 0.5 * cand_w, cand_cy - 0.5 * cand_h, cand_w, cand_h)
 
     def clip_box(self, box, image_h, image_w, margin):
         x1, y1, w, h = box

@@ -122,12 +122,15 @@ apps/*/*/build/
 # OCR Web demo: cloned/built by apps/paddle-ocr-web/python/build.sh
 apps/paddle-ocr-web/python/PP-OCRv5_Online_demo-deepx/
 apps/paddle-ocr-web/python/PaddleOCR-deepx/
-apps/paddle-ocr-web/python/.build/
 apps/paddle-ocr-web/.browser.pid
 
 # Model Zoo: browser PID recorded by scripts/run_modelzoo.sh
 apps/model-zoo/.browser.pid
 apps/model-zoo/browser-profile/
+
+# Launcher: per-run ready markers and demo logs (launcher/main.py)
+launcher/ready/
+launcher/logs/
 
 # Ignore all model files and large archives
 *.dxnn

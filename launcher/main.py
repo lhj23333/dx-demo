@@ -60,6 +60,11 @@ _ROOT = Path(__file__).resolve().parent
 READY_STATUS_DIR = (_ROOT / "ready").resolve()
 READY_FILE_ENV = "DX_LAUNCHER_READY_FILE"
 
+# Demos outlive the launcher's terminal, so they get their own log instead of
+# inheriting its stdout: writing to a closed terminal fails with EIO, which the
+# OCR server reports as a failed request rather than a broken pipe.
+LOG_DIR = (_ROOT / "logs").resolve()
+
 _ready_watcher: QFileSystemWatcher | None = None
 _ready_finishers: dict[str, Callable[[], None]] = {}
 
@@ -360,16 +365,29 @@ def _run_shell_script(
     env = os.environ.copy()
     if extra_env:
         env.update(extra_env)
+
+    log = subprocess.DEVNULL
+    try:
+        LOG_DIR.mkdir(parents=True, exist_ok=True)
+        log = open(LOG_DIR / f"{p.stem}.log", "w")
+    except OSError as e:
+        print(f"[launcher] no log file for {p.stem}: {e}", file=sys.stderr)
+
     try:
         subprocess.Popen(
             ["/bin/bash", str(p), "--language", language_code],
             cwd=str(p.parent),
             start_new_session=True,
             env=env,
+            stdout=log,
+            stderr=subprocess.STDOUT,
         )
     except OSError as e:
         print(f"[launcher] failed to run {p}: {e}", file=sys.stderr)
         return False
+    finally:
+        if log is not subprocess.DEVNULL:
+            log.close()
     return True
 
 

@@ -528,7 +528,7 @@ def make_landmark_input(frame, roi):
     crop_rgb = cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2RGB)
     return np.ascontiguousarray(crop_rgb, dtype=np.uint8), crop_to_frame
 
-def parse_landmark_outputs(landmarks_tensor, presence_tensor, handedness_tensor, world_tensor, palm, crop_to_frame):
+def parse_landmark_outputs(landmarks_tensor, presence_tensor, handedness_tensor, world_tensor, palm, crop_to_frame, mirrored=False):
     landmarks = landmarks_tensor.flatten()
     presence_score = presence_tensor.flatten()[0]
     handedness_score = handedness_tensor.flatten()[0]
@@ -539,7 +539,7 @@ def parse_landmark_outputs(landmarks_tensor, presence_tensor, handedness_tensor,
         palm=palm,
         landmarks=[],
         world_landmarks=[],
-        handedness="Right" if handedness_score > 0.5 else "Left",
+        handedness="Unknown",
         handedness_score=handedness_score,
         confidence=presence_score
     )
@@ -558,6 +558,14 @@ def parse_landmark_outputs(landmarks_tensor, presence_tensor, handedness_tensor,
         result.landmarks.append((frame_points[i][0], frame_points[i][1], z))
         if world is not None:
             result.world_landmarks.append((world[offset], world[offset+1], world[offset+2]))
+
+    # Identity_2 is P(right) in the model input. Camera frames are flipped,
+    # so invert the label for selfie view only — do not use finger geometry
+    # (back-of-hand vs palm flips that test).
+    right = handedness_score > 0.5
+    if mirrored:
+        right = not right
+    result.handedness = "Right" if right else "Left"
             
     return result
 
@@ -811,7 +819,7 @@ def hand_loop(options, hand_queue, results, running):
                     if len(lm_outputs) >= 3:
                         res = parse_landmark_outputs(lm_outputs[0], lm_outputs[1], lm_outputs[2], 
                                                      lm_outputs[3] if len(lm_outputs) > 3 else None,
-                                                     palm, crop_to_frame)
+                                                     palm, crop_to_frame, mirrored=options.use_camera)
                         if res.confidence >= options.landmark_conf:
                             hands.append(res)
                             

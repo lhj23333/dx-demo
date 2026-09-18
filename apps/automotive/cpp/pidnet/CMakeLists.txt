@@ -34,7 +34,7 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR}/extern)
 # =============================================================================
 # Common Libraries & Flags
 # =============================================================================
-set(COMMON_LIBS ${OpenCV_LIBS} ${DXRT_LIB} Qt5::Widgets)
+set(COMMON_LIBS ${OpenCV_LIBS} ${DXRT_LIB} Qt5::Widgets pthread)
 add_compile_definitions(DXAPP_USE_QT_DISPLAY)
 
 # Filesystem library for older compilers
